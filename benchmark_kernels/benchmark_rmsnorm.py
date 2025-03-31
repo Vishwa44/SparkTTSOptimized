@@ -1,4 +1,7 @@
 import math
+import sys 
+import os
+sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import time
 import torch
 import torch.nn as nn
@@ -43,34 +46,28 @@ def benchmark_rmsnorm(batch_size, seq_len, hidden_size, dtype=torch.float16, num
     Returns:
         Dictionary containing timing results and accuracy metrics
     """
-    # Create input tensor with same values for fair comparison
     torch.manual_seed(42)
     x = torch.randn(batch_size, seq_len, hidden_size, dtype=dtype, device=device)
     weight = torch.randn(hidden_size, dtype=dtype, device=device)
     
-    # Set up implementations
     pytorch_module = Qwen2RMSNorm(hidden_size).to(device)
     pytorch_module.weight.data = weight.clone()
     
     triton_module = TritonRMSNorm(hidden_size).to(device)
     triton_module.weight.data = weight.clone()
     
-    # Warmup runs
     for _ in range(10):
         pytorch_out = pytorch_module(x)
         triton_out = triton_module(x)
     
-    # Check accuracy
     pytorch_out = pytorch_module(x)
     triton_out = triton_module(x)
     
-    # Calculate metrics
     abs_diff = (pytorch_out - triton_out).abs()
     max_diff = abs_diff.max().item()
     mean_diff = abs_diff.mean().item()
     relative_diff = (abs_diff / (pytorch_out.abs() + 1e-7)).mean().item()
     
-    # Benchmark PyTorch implementation
     torch.cuda.synchronize()
     start_time = time.time()
     for _ in range(num_runs):
@@ -78,7 +75,6 @@ def benchmark_rmsnorm(batch_size, seq_len, hidden_size, dtype=torch.float16, num
         torch.cuda.synchronize()
     pytorch_time = (time.time() - start_time) / num_runs * 1000  # ms
     
-    # Benchmark Triton implementation
     torch.cuda.synchronize()
     start_time = time.time()
     for _ in range(num_runs):
@@ -86,7 +82,6 @@ def benchmark_rmsnorm(batch_size, seq_len, hidden_size, dtype=torch.float16, num
         torch.cuda.synchronize()
     triton_time = (time.time() - start_time) / num_runs * 1000  # ms
     
-    # Return results
     results = {
         "pytorch_time_ms": pytorch_time,
         "triton_time_ms": triton_time,
@@ -110,17 +105,12 @@ def run_benchmark_suite():
     Run a suite of benchmarks for different shapes and dtypes.
     """
     configs = [
-        # Small models
         {"batch_size": 1, "seq_len": 512, "hidden_size": 896},
         {"batch_size": 8, "seq_len": 512, "hidden_size": 896},
-        # Medium models
         {"batch_size": 1, "seq_len": 1000, "hidden_size": 896},
         {"batch_size": 4, "seq_len": 1024, "hidden_size": 896},
-        # # Large models
         {"batch_size": 1, "seq_len": 2048, "hidden_size": 896},
         {"batch_size": 2, "seq_len": 2048, "hidden_size": 896},
-        # # Very large models
-        # {"batch_size": 1, "seq_len": 4096, "hidden_size": 8192},
     ]
     
     dtypes = [torch.float32, torch.float16, torch.bfloat16]
@@ -133,7 +123,6 @@ def run_benchmark_suite():
             result = benchmark_rmsnorm(**config, dtype=dtype)
             results.append(result)
             
-            # Print current result
             shape_info = f"[{config['batch_size']}×{config['seq_len']}×{config['hidden_size']}] {str(dtype)}"
             print(f"  {shape_info}: PyTorch: {result['pytorch_time_ms']:.2f}ms, Triton: {result['triton_time_ms']:.2f}ms, "
                   f"Speedup: {result['speedup']:.2f}x, Max diff: {result['max_abs_diff']:.2e}")
@@ -142,11 +131,9 @@ def run_benchmark_suite():
 
 
 if __name__ == "__main__":
-    # If this script is run directly, execute the benchmark suite
     if torch.cuda.is_available():
         results = run_benchmark_suite()
         
-        # Print summary
         print("\nSummary:")
         avg_speedup = np.mean([r["speedup"] for r in results])
         max_speedup = np.max([r["speedup"] for r in results])

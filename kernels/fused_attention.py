@@ -27,21 +27,17 @@ def _attn_fwd_inner(acc, l_i, m_i, q,  #
                     BLOCK_M: tl.constexpr, HEAD_DIM: tl.constexpr, BLOCK_N: tl.constexpr,  #
                     STAGE: tl.constexpr, offs_m: tl.constexpr, offs_n: tl.constexpr,  #
                     N_CTX: tl.constexpr, fp8_v: tl.constexpr):
-    # range of values handled by this stage
     if STAGE == 1:
         lo, hi = 0, start_m * BLOCK_M
     elif STAGE == 2:
         lo, hi = start_m * BLOCK_M, (start_m + 1) * BLOCK_M
         lo = tl.multiple_of(lo, BLOCK_M)
-    # causal = False
     else:
         lo, hi = 0, N_CTX
     K_block_ptr = tl.advance(K_block_ptr, (0, lo))
     V_block_ptr = tl.advance(V_block_ptr, (lo, 0))
-    # loop over k, v and update accumulator
     for start_n in range(lo, hi, BLOCK_N):
         start_n = tl.multiple_of(start_n, BLOCK_N)
-        # -- compute qk ----
         k = tl.load(K_block_ptr)
         qk = tl.dot(q, k)
         if STAGE == 2:
@@ -54,19 +50,15 @@ def _attn_fwd_inner(acc, l_i, m_i, q,  #
             qk = qk * qk_scale - m_ij[:, None]
         p = tl.math.exp2(qk)
         l_ij = tl.sum(p, 1)
-        # -- update m_i and l_i
         alpha = tl.math.exp2(m_i - m_ij)
         l_i = l_i * alpha + l_ij
-        # -- update output accumulator --
         acc = acc * alpha[:, None]
-        # update acc
         v = tl.load(V_block_ptr)
         if fp8_v:
             p = p.to(tl.float8e5)
         else:
             p = p.to(tl.float32)
         acc = tl.dot(p, v, acc)
-        # update m_i and l_i
         m_i = m_ij
         V_block_ptr = tl.advance(V_block_ptr, (BLOCK_N, 0))
         K_block_ptr = tl.advance(K_block_ptr, (0, BLOCK_N))
@@ -91,7 +83,6 @@ def _attn_fwd(Q, K, V, sm_scale, M, Out,  #
     off_h = off_hz % H
     qvk_offset = off_z.to(tl.int64) * stride_qz + off_h.to(tl.int64) * stride_qh
 
-    # block pointers
     Q_block_ptr = tl.make_block_ptr(
         base=Q + qvk_offset,
         shape=(N_CTX, HEAD_DIM),
@@ -125,37 +116,29 @@ def _attn_fwd(Q, K, V, sm_scale, M, Out,  #
         block_shape=(BLOCK_M, HEAD_DIM),
         order=(1, 0),
     )
-    # initialize offsets
     offs_m = start_m * BLOCK_M + tl.arange(0, BLOCK_M)
     offs_n = tl.arange(0, BLOCK_N)
-    # initialize pointer to m and l
     m_i = tl.zeros([BLOCK_M], dtype=tl.float32) - float("inf")
     l_i = tl.zeros([BLOCK_M], dtype=tl.float32) + 1.0
     acc = tl.zeros([BLOCK_M, HEAD_DIM], dtype=tl.float32)
     # load scales
     qk_scale = sm_scale
     qk_scale *= 1.44269504  # 1/log(2)
-    # load q: it will stay in SRAM throughout
+
     q = tl.load(Q_block_ptr)
-    # stage 1: off-band
-    # For causal = True, STAGE = 3 and _attn_fwd_inner gets 1 as its STAGE
-    # For causal = False, STAGE = 1, and _attn_fwd_inner gets 3 as its STAGE
+
     if STAGE & 1:
         acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, K_block_ptr, V_block_ptr,  #
                                         start_m, qk_scale,  #
                                         BLOCK_M, HEAD_DIM, BLOCK_N,  #
                                         4 - STAGE, offs_m, offs_n, N_CTX, V.dtype.element_ty == tl.float8e5  #
                                         )
-    # stage 2: on-band
     if STAGE & 2:
-        # barrier makes it easier for compielr to schedule the
-        # two loops independently
         acc, l_i, m_i = _attn_fwd_inner(acc, l_i, m_i, q, K_block_ptr, V_block_ptr,  #
                                         start_m, qk_scale,  #
                                         BLOCK_M, HEAD_DIM, BLOCK_N,  #
                                         2, offs_m, offs_n, N_CTX, V.dtype.element_ty == tl.float8e5  #
                                         )
-    # epilogue
     m_i += tl.math.log2(l_i)
     acc = acc / l_i[:, None]
     m_ptrs = M + off_hz * N_CTX + offs_m
@@ -248,10 +231,7 @@ def triton_flash_attention(
         output: [batch_size, seq_len, num_heads, head_dim]
         None: Attention weights (not computed)
     """
-    # For now, we're ignoring attention_mask, dropout, and sliding_window
-    # This is a simplified implementation of Flash Attention
-    
-    # Call the flash attention implementation
+
     output = flash_attention(
         q=query,
         k=key,
@@ -260,10 +240,8 @@ def triton_flash_attention(
         causal=True,  # Most LLMs use causal attention
     )
     
-    # Transpose output to match expected format [batch, seq_len, num_heads, head_dim]
     output = output.transpose(1, 2).contiguous()
     
-    # Flash attention doesn't compute attention weights
     attn_weights = None
     
     return output, attn_weights
@@ -276,7 +254,6 @@ def patch_qwen2_with_flash_attention():
     try:
         from transformers.models.qwen2.modeling_qwen2 import ALL_ATTENTION_FUNCTIONS
         
-        # Add Flash Attention to the dictionary of attention functions
         ALL_ATTENTION_FUNCTIONS["flash"] = triton_flash_attention
         
         print("Successfully patched Qwen2Attention with Flash Attention")
@@ -290,11 +267,9 @@ def use_flash_attention_for_model(model):
     """
     Set a specific model instance to use Flash Attention
     """
-    # Ensure flash attention is registered
     if not patch_qwen2_with_flash_attention():
         return False
     
-    # Set the model to use flash attention
     success = False
     for module in model.modules():
         if hasattr(module, "config") and hasattr(module.config, "_attn_implementation"):

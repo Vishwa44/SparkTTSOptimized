@@ -4,12 +4,12 @@ from transformers.models.qwen2.modeling_qwen2 import Qwen2RMSNorm, Qwen2MLP
 from sparktts.models.audio_tokenizer import BiCodecTokenizer
 import time
 import numpy as np
-import triton
+import argparse
 from torch.profiler import profile, record_function, ProfilerActivity, tensorboard_trace_handler
 from typing import Tuple
 from pathlib import Path
 from sparktts.utils.token_parser import TASK_TOKEN_MAP
-
+import argparse
 from kernels.RMSNorm_triton import custom_rms_forward_optimized
 from kernels.fused_mlp import custom_mlp_forward_optimized
 
@@ -73,8 +73,7 @@ def process_prompt(
     return inputs, global_token_ids
 
 
-def main(seq_len = 1000, profile_imp = False):
-    model_dir = "/home/vishwa/small_projects/pretrained_model"
+def main(args):
     device = torch.device("cuda:0")
     
     def warmup_triton():
@@ -102,9 +101,9 @@ def main(seq_len = 1000, profile_imp = False):
     
     # Benchmark original PyTorch implementation
     print("Benchmarking original PyTorch implementation...")
-    model = AutoModelForCausalLM.from_pretrained(f"{model_dir}/LLM", torch_dtype="bfloat16", _attn_implementation="eager")
-    tokenizer = AutoTokenizer.from_pretrained(f"{model_dir}/LLM")
-    audio_tokenizer = BiCodecTokenizer(model_dir, device=device)
+    model = AutoModelForCausalLM.from_pretrained(f"{args.model_dir}/LLM", torch_dtype="bfloat16", _attn_implementation="eager")
+    tokenizer = AutoTokenizer.from_pretrained(f"{args.model_dir}/LLM")
+    audio_tokenizer = BiCodecTokenizer(args.model_dir, device=device)
     # text = "Hi! How are you?"
     text = '''The wind whispered through the ancient trees, their gnarled branches reaching toward the sky like the fingers of forgotten giants. A narrow dirt path wound through the dense forest, illuminated only by slivers of moonlight breaking through the thick canopy above. Somewhere in the distance, an owl hooted—a lone sentinel of the night.
 
@@ -143,7 +142,7 @@ And the door opened.'''
     original_forward_mlp = Qwen2MLP.forward
     
     og_time_list = []
-    if profile_imp:
+    if args.profile_imp:
          with profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 record_shapes=True,
@@ -159,7 +158,7 @@ And the door opened.'''
         prompt, global_token_ids = process_prompt(audio_tokenizer, text, prompt_speech_path)
         model_inputs = tokenizer([prompt], return_tensors="pt").to(device)
         tokenizer_execution_time = time.time() - st
-    if profile_imp:
+    if args.profile_imp:
         with profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 schedule=torch.profiler.schedule(wait=1, warmup=3, active=5),
@@ -182,24 +181,22 @@ And the door opened.'''
                     torch.cuda.synchronize()
                     execution_time = time.time() - st
                     
-                    # Skip the first few iterations as warmup
                     if i >= 5:
                         og_time_list.append(execution_time)
                     prof.step()
     else:
         with torch.no_grad():
-                torch.cuda.synchronize()  # Ensure previous operations are complete
-                for i in range(15):  # Increased iterations for better measurement
+                torch.cuda.synchronize()
+                for i in range(15):
                     # ip = torch.randint(low=0, high=166000, size=(1, seq_len), device=device).cuda()
                     
                     torch.cuda.synchronize()
                     st = time.time()
                     _ = model(model_inputs['input_ids'])
                     # _ = model(ip)
-                    torch.cuda.synchronize()  # Ensure GPU work is complete
+                    torch.cuda.synchronize()
                     execution_time = time.time() - st
                     
-                    # Skip the first few iterations as warmup
                     if i >= 5:
                         og_time_list.append(execution_time)
     
@@ -207,11 +204,11 @@ And the door opened.'''
     print("Benchmarking optimized Triton implementation...")
     Qwen2RMSNorm.forward = custom_rms_forward_optimized
     Qwen2MLP.forward = custom_mlp_forward_optimized
-    model = AutoModelForCausalLM.from_pretrained(f"{model_dir}/LLM", torch_dtype="bfloat16", _attn_implementation="flash_attention_2")
+    model = AutoModelForCausalLM.from_pretrained(f"{args.model_dir}/LLM", torch_dtype="bfloat16", _attn_implementation="flash_attention_2")
     model.to(device)
     
     triton_time_list = []
-    if profile_imp:
+    if args.profile_imp:
         with profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                 schedule=torch.profiler.schedule(wait=1, warmup=3, active=5),
@@ -263,9 +260,9 @@ And the door opened.'''
         min_t = np.min(times)
         max_t = np.max(times)
         print(f"{name} - avg: {avg:.4f}s, std: {std:.4f}s, min: {min_t:.4f}s, max: {max_t:.4f}s")
-    if not profile_imp:
+    if not args.profile_imp:
         print("\nPerformance Results:")
-        # print("Tokenizer time", tokenizer_execution_time)
+        print("Tokenizer time", tokenizer_execution_time)
         print_stats("PyTorch Implementation", og_time_list)
         print_stats("Optimized Triton Implementation", triton_time_list)
         
@@ -281,23 +278,13 @@ And the door opened.'''
         return
     
 if __name__ == "__main__":
-    main(profile_imp=True)
-    # ip_seq = [3000, 3500, 4000, 4500, 5000]
-    # speedups = []
-    # pt_avgs = []
-    # triton_avgs = []
-    # for i in ip_seq:
-    #     print(i)
-    #     times = main(seq_len=i)
-    #     speedups.append(times[0])
-    #     pt_avgs.append(times[1])
-    #     triton_avgs.append(times[2])
-    #     print(speedups)
-    #     print(pt_avgs)
-    #     print(triton_avgs)
-    # print("speedups: ", speedups)
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--model_dir', type=str, default="/home/vishwa/small_projects/pretrained_model", help='path to the model')
+    parser.add_argument('--profile_imp', type=bool, default=False, help='profile?')
+    args = parser.parse_args()
+    main(args)
 
-
+# [500, 1000, 1500, 2000, 2500]
 # [1.1790394150302708, 1.698469844530697, 2.234700139957699, 1.8123769616315415, 1.7236127499987484]
 # [0.04965386390686035, 0.11882259845733642, 0.23769795894622803, 0.39529168605804443, 0.5909201145172119]
 # [0.04211382865905762, 0.06995861530303955, 0.10636682510375976, 0.2181067705154419, 0.34283809661865233]
