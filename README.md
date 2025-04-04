@@ -28,15 +28,15 @@ For the attention mechanism, I used Flash Attention 2 (`flash_attention_2`), whi
 
 We tested various sequence lengths to understand scaling behavior:
 
-| Sequence Length | PyTorch Implementation | Torch Compile | Optimized Triton Implementation | PyTorch Speedup | Torch Compile Speedup |
-|-----------------|------------------------|---------------|--------------------------------|-----------------|----------------------|
-| 500 tokens      | 0.0482s               | 0.0389s       | 0.0377s                        | 1.28x           | 1.03x                |
-| 1000 tokens     | 0.1204s               | 0.0834s       | 0.0691s                        | 1.74x           | 1.21x                |
-| 1500 tokens     | 0.2325s               | 0.1423s       | 0.1020s                        | 2.28x           | 1.40x                |
-| 2000 tokens     | 0.3379s               | 0.1937s       | 0.1355s                        | 2.49x           | 1.43x                |
-| 2500 tokens     | 0.4530s               | 0.2714s       | 0.1714s                        | 2.64x           | 1.58x                |
+| Sequence Length | PyTorch Implementation | Torch Compile (eager) | Torch Compile (Flash Attention 2) | Optimized Triton Implementation | PyTorch Speedup | Torch Compile (eager) Speedup | Torch Compile (FA2) Speedup |
+|-----------------|------------------------|----------------------|----------------------------------|--------------------------------|-----------------|------------------------------|----------------------------|
+| 500 tokens      | 0.0482s               | 0.0389s              | 0.0361s                          | 0.0377s                        | 1.28x           | 1.03x                        | 0.96x                      |
+| 1000 tokens     | 0.1204s               | 0.0834s              | 0.0637s                          | 0.0691s                        | 1.74x           | 1.21x                        | 0.92x                      |
+| 1500 tokens     | 0.2325s               | 0.1423s              | 0.0958s                          | 0.1020s                        | 2.28x           | 1.40x                        | 0.94x                      |
+| 2000 tokens     | 0.3379s               | 0.1937s              | 0.1337s                          | 0.1355s                        | 2.49x           | 1.43x                        | 0.99x                      |
+| 2500 tokens     | 0.4530s               | 0.2714s              | 0.1649s                          | 0.1714s                        | 2.64x           | 1.58x                        | 0.96x                      |
 
-![image](src/figures/benchmark.png)
+![image](src/figures/newplot.png)
 The speedup factor increases with sequence length up to a point, which is critical for TTS applications where longer text inputs are common.
 
 ### Kernel-Specific Benchmarks
