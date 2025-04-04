@@ -12,7 +12,7 @@ from sparktts.utils.token_parser import TASK_TOKEN_MAP
 import argparse
 from kernels.RMSNorm_triton import custom_rms_forward_optimized
 from kernels.fused_mlp import custom_mlp_forward_optimized
-
+torch.set_float32_matmul_precision('high')
 
 def process_prompt(
     audio_tokenizer,
@@ -141,7 +141,6 @@ And the door opened.'''
     original_forward_rms = Qwen2RMSNorm.forward
     original_forward_mlp = Qwen2MLP.forward
     
-    og_time_list = []
     if args.profile_imp:
          with profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -158,6 +157,10 @@ And the door opened.'''
         prompt, global_token_ids = process_prompt(audio_tokenizer, text, prompt_speech_path)
         model_inputs = tokenizer([prompt], return_tensors="pt").to(device)
         tokenizer_execution_time = time.time() - st
+    
+    torch.cuda.empty_cache()
+    og_time_list = []
+
     if args.profile_imp:
         with profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -172,7 +175,7 @@ And the door opened.'''
             with torch.no_grad():
                 torch.cuda.synchronize()
                 for i in range(15):
-                    # ip = torch.randint(low=0, high=166000, size=(1, seq_len), device=device).cuda()
+                    # ip = torch.randint(low=0, high=166000, size=(1, args.seq_len), device=device).cuda()
                     
                     torch.cuda.synchronize()
                     st = time.time()
@@ -188,7 +191,7 @@ And the door opened.'''
         with torch.no_grad():
                 torch.cuda.synchronize()
                 for i in range(15):
-                    # ip = torch.randint(low=0, high=166000, size=(1, seq_len), device=device).cuda()
+                    # ip = torch.randint(low=0, high=166000, size=(1, args.seq_len), device=device).cuda()
                     
                     torch.cuda.synchronize()
                     st = time.time()
@@ -200,6 +203,55 @@ And the door opened.'''
                     if i >= 5:
                         og_time_list.append(execution_time)
     
+    # Benchmark torch.compile model
+    print("Benchmarking torch.compile...seq_len: ", args.seq_len)
+    compiled_model = torch.compile(model, dynamic=True)
+    compile_time_list=[]
+
+    torch.cuda.empty_cache()
+
+    if args.profile_imp:
+        with profile(
+                activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
+                schedule=torch.profiler.schedule(wait=1, warmup=3, active=5),
+                record_shapes=True,
+                profile_memory=True,
+                with_stack=True,
+                with_flops=True,
+                with_modules=True,
+                on_trace_ready=tensorboard_trace_handler('./profiler/forwardpass_compile')
+            ) as prof:
+            with torch.no_grad():
+                torch.cuda.synchronize()
+                for i in range(15):
+                    # ip = torch.randint(low=0, high=166000, size=(1, args.seq_len), device=device).cuda()
+                    
+                    torch.cuda.synchronize()
+                    st = time.time()
+                    _ = compiled_model(model_inputs['input_ids'])
+                    # _ = compiled_model(ip)
+                    torch.cuda.synchronize()
+                    execution_time = time.time() - st
+                    
+                    if i >= 5:
+                        compile_time_list.append(execution_time)
+                    prof.step()
+    else:
+        with torch.no_grad():
+                torch.cuda.synchronize()
+                for i in range(15):
+                    # ip = torch.randint(low=0, high=166000, size=(1, args.seq_len), device=device).cuda()
+                    
+                    torch.cuda.synchronize()
+                    st = time.time()
+                    _ = compiled_model(model_inputs['input_ids'])
+                    # _ = compiled_model(ip)
+                    torch.cuda.synchronize()
+                    execution_time = time.time() - st
+                    
+                    if i >= 5:
+                        compile_time_list.append(execution_time)
+
     # Benchmark our optimized Triton implementation
     print("Benchmarking optimized Triton implementation...")
     Qwen2RMSNorm.forward = custom_rms_forward_optimized
@@ -208,6 +260,9 @@ And the door opened.'''
     model.to(device)
     
     triton_time_list = []
+
+    torch.cuda.empty_cache()
+
     if args.profile_imp:
         with profile(
                 activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
@@ -222,7 +277,7 @@ And the door opened.'''
             with torch.no_grad():
                 torch.cuda.synchronize()
                 for i in range(15):
-                    # ip = torch.randint(low=0, high=166000, size=(1, seq_len), device=device).cuda()
+                    # ip = torch.randint(low=0, high=166000, size=(1, args.seq_len), device=device).cuda()
                     
                     torch.cuda.synchronize()
                     st = time.time()
@@ -238,12 +293,12 @@ And the door opened.'''
         with torch.no_grad():
                 torch.cuda.synchronize()
                 for i in range(15):
-                    # ip = torch.randint(low=0, high=166000, size=(1, seq_len), device=device).cuda()
+                    # ip = torch.randint(low=0, high=166000, size=(1, args.seq_len), device=device).cuda()
                     
                     torch.cuda.synchronize()
                     st = time.time()
                     _ = model(model_inputs['input_ids'])
-                    # _ = model(ip)
+                    _ = model(ip)
                     torch.cuda.synchronize()
                     execution_time = time.time() - st
                     
@@ -264,15 +319,18 @@ And the door opened.'''
         print("\nPerformance Results:")
         print("Tokenizer time", tokenizer_execution_time)
         print_stats("PyTorch Implementation", og_time_list)
+        print_stats("Torch.compile Implementation", compile_time_list)
         print_stats("Optimized Triton Implementation", triton_time_list)
         
         # Calculate speedups
         pt_avg = np.mean(og_time_list)
+        compile_avg = np.mean(compile_time_list)
         triton_avg = np.mean(triton_time_list)
         
         print(f"\nSpeed Comparison:")
         print(f"Optimized Triton vs PyTorch: {pt_avg/triton_avg:.2f}x speedup")
-        return pt_avg/triton_avg, pt_avg, triton_avg
+        print(f"Optimized Triton vs Torch.compile: {compile_avg/triton_avg:.2f}x speedup")
+        return pt_avg/triton_avg, compile_avg/triton_avg, pt_avg, triton_avg, compile_avg
     else:
         print("Profiling done")
         return
@@ -281,6 +339,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_dir', type=str, default="/home/vishwa/small_projects/pretrained_model", help='path to the model')
     parser.add_argument('--profile_imp', type=bool, default=False, help='profile?')
+    parser.add_argument('--seq_len', type=int, default=1000, help='sequence length')
     args = parser.parse_args()
     main(args)
 
@@ -288,3 +347,29 @@ if __name__ == "__main__":
 # [1.1790394150302708, 1.698469844530697, 2.234700139957699, 1.8123769616315415, 1.7236127499987484]
 # [0.04965386390686035, 0.11882259845733642, 0.23769795894622803, 0.39529168605804443, 0.5909201145172119]
 # [0.04211382865905762, 0.06995861530303955, 0.10636682510375976, 0.2181067705154419, 0.34283809661865233]
+"""
+seq_len 500
+PyTorch Implementation - avg: 0.0482s, std: 0.0003s, min: 0.0476s, max: 0.0486s
+Optimized Triton Implementation - avg: 0.0377s, std: 0.0010s, min: 0.0368s, max: 0.0400s
+Torch.compile Implementation - avg: 0.0389s, std: 0.0001s, min: 0.0387s, max: 0.0392s
+seq_len 1000
+PyTorch Implementation - avg: 0.1204s, std: 0.0037s, min: 0.1179s, max: 0.1279s
+Optimized Triton Implementation - avg: 0.0691s, std: 0.0028s, min: 0.0667s, max: 0.0762s
+Torch.compile Implementation - avg: 0.0834s, std: 0.0015s, min: 0.0822s, max: 0.0869s
+seq_len 1500
+PyTorch Implementation - avg: 0.2325s, std: 0.0016s, min: 0.2303s, max: 0.2348s
+Optimized Triton Implementation - avg: 0.1020s, std: 0.0049s, min: 0.0956s, max: 0.1155s
+Torch.compile Implementation - avg: 0.1423s, std: 0.0024s, min: 0.1400s, max: 0.1470s
+seq_len 2000
+PyTorch Implementation - avg: 0.3379s, std: 0.0053s, min: 0.3301s, max: 0.3466s
+Optimized Triton Implementation - avg: 0.1355s, std: 0.0026s, min: 0.1326s, max: 0.1404s
+Torch.compile Implementation - avg: 0.1937s, std: 0.0022s, min: 0.1910s, max: 0.1969s
+seq_len 2500
+PyTorch Implementation - avg: 0.4530s, std: 0.0037s, min: 0.4493s, max: 0.4611s
+Optimized Triton Implementation - avg: 0.1714s, std: 0.0049s, min: 0.1663s, max: 0.1826s
+Torch.compile Implementation - avg: 0.2714s, std: 0.0048s, min: 0.2650s, max: 0.2834s
+"""
+# seq_len = [500, 1000, 1500, 2000, 2500]
+# pytorch_runtimes = [0.0482, 0.1204, 0.2325, 0.3379, 0.4530]
+# torch_compile_runtime = [0.0389, 0.0834, 0.1423, 0.1937, 0.2714]
+# optimized_triton_runtime = [0.0377, 0.0691, 0.1020, 0.1355, 0.1714]
