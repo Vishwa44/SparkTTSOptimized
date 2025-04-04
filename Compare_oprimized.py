@@ -298,7 +298,7 @@ And the door opened.'''
                     torch.cuda.synchronize()
                     st = time.time()
                     _ = model(model_inputs['input_ids'])
-                    _ = model(ip)
+                    # _ = model(ip)
                     torch.cuda.synchronize()
                     execution_time = time.time() - st
                     
