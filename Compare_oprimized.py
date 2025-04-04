@@ -344,39 +344,42 @@ if __name__ == "__main__":
     args = parser.parse_args()
     main(args)
 
-# [500, 1000, 1500, 2000, 2500]
-# [1.1790394150302708, 1.698469844530697, 2.234700139957699, 1.8123769616315415, 1.7236127499987484]
-# [0.04965386390686035, 0.11882259845733642, 0.23769795894622803, 0.39529168605804443, 0.5909201145172119]
-# [0.04211382865905762, 0.06995861530303955, 0.10636682510375976, 0.2181067705154419, 0.34283809661865233]
+
 """
 seq_len 500
-PyTorch Implementation - avg: 0.0482s, std: 0.0003s, min: 0.0476s, max: 0.0486s
+PyTorch Implementation (eager) - avg: 0.0482s, std: 0.0003s, min: 0.0476s, max: 0.0486s
+PyTorch Implementation (flash attention 2) - avg: 0.0421s, std: 0.0030s, min: 0.0400s, max: 0.0488s
 Optimized Triton Implementation - avg: 0.0377s, std: 0.0010s, min: 0.0368s, max: 0.0400s
 Torch.compile Implementation (flash attention 2) - avg: 0.0361s, std: 0.0013s, min: 0.0348s, max: 0.0396s
 Torch.compile Implementation (eager) - avg: 0.0389s, std: 0.0001s, min: 0.0387s, max: 0.0392s
 seq_len 1000
-PyTorch Implementation - avg: 0.1204s, std: 0.0037s, min: 0.1179s, max: 0.1279s
+PyTorch Implementation (eager) - avg: 0.1204s, std: 0.0037s, min: 0.1179s, max: 0.1279s
+PyTorch Implementation (flash attention 2) - avg: 0.0761s, std: 0.0013s, min: 0.0746s, max: 0.0789s
 Optimized Triton Implementation - avg: 0.0691s, std: 0.0028s, min: 0.0667s, max: 0.0762s
 Torch.compile Implementation (flash attention 2) - avg: 0.0637s, std: 0.0007s, min: 0.0623s, max: 0.0650s
 Torch.compile Implementation (eager) - avg: 0.0834s, std: 0.0015s, min: 0.0822s, max: 0.0869s
 seq_len 1500
-PyTorch Implementation - avg: 0.2325s, std: 0.0016s, min: 0.2303s, max: 0.2348s
+PyTorch Implementation (eager) - avg: 0.2325s, std: 0.0016s, min: 0.2303s, max: 0.2348s
+PyTorch Implementation (flash attention 2) - avg: 0.1146s, std: 0.0023s, min: 0.1103s, max: 0.1187s
 Optimized Triton Implementation - avg: 0.1020s, std: 0.0049s, min: 0.0956s, max: 0.1155s
 Torch.compile Implementation (flash attention 2) - avg: 0.0958s, std: 0.0012s, min: 0.0943s, max: 0.0976s
 Torch.compile Implementation (eager) - avg: 0.1423s, std: 0.0024s, min: 0.1400s, max: 0.1470s
 seq_len 2000
-PyTorch Implementation - avg: 0.3379s, std: 0.0053s, min: 0.3301s, max: 0.3466s
+PyTorch Implementation (eager) - avg: 0.3379s, std: 0.0053s, min: 0.3301s, max: 0.3466s
+PyTorch Implementation (flash attention 2) - avg: 0.1517s, std: 0.0047s, min: 0.1469s, max: 0.1600s
 Optimized Triton Implementation - avg: 0.1355s, std: 0.0026s, min: 0.1326s, max: 0.1404s
 Torch.compile Implementation (flash attention 2) - avg: 0.1337s, std: 0.0016s, min: 0.1318s, max: 0.1382s
 Torch.compile Implementation (eager) - avg: 0.1937s, std: 0.0022s, min: 0.1910s, max: 0.1969s
 seq_len 2500
-PyTorch Implementation - avg: 0.4530s, std: 0.0037s, min: 0.4493s, max: 0.4611s
+PyTorch Implementation (eager) - avg: 0.4530s, std: 0.0037s, min: 0.4493s, max: 0.4611s
+PyTorch Implementation (flash attention 2) - avg: 0.1848s, std: 0.0027s, min: 0.1801s, max: 0.1901s
 Optimized Triton Implementation - avg: 0.1714s, std: 0.0049s, min: 0.1663s, max: 0.1826s
 Torch.compile Implementation (flash attention 2)- avg: 0.1649s, std: 0.0022s, min: 0.1617s, max: 0.1678s
 Torch.compile Implementation (eager) - avg: 0.2714s, std: 0.0048s, min: 0.2650s, max: 0.2834s
 """
 # seq_len = [500, 1000, 1500, 2000, 2500]
-# pytorch_runtimes = [0.0482, 0.1204, 0.2325, 0.3379, 0.4530]
+# pytorch_runtimes_eager = [0.0482, 0.1204, 0.2325, 0.3379, 0.4530]
+# pytorch_runtimes_flash_attention_2 = [0.0421, 0.0761, 0.1146, 0.1517, 0.1848]
 # torch_compile_runtime_eager = [0.0389, 0.0834, 0.1423, 0.1937, 0.2714]
 # torch_compile_runtime_flash_attention_2 = [0.0361, 0.0637, 00.0958, 0.1337, 0.1649]
 # optimized_triton_runtime = [0.0377, 0.0691, 0.1020, 0.1355, 0.1714]
