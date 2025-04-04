@@ -28,14 +28,15 @@ For the attention mechanism, I used Flash Attention 2 (`flash_attention_2`), whi
 
 We tested various sequence lengths to understand scaling behavior:
 
-| Sequence Length | PyTorch Implementation | Optimized Triton Implementation | Speedup |
-|-----------------|------------------------|--------------------------------|---------|
-| 500 tokens      | 0.0497s               | 0.0421s                        | 1.18x   |
-| 1000 tokens     | 0.1188s               | 0.0700s                        | 1.70x   |
-| 1500 tokens     | 0.2377s               | 0.1064s                        | 2.23x   |
-| 2000 tokens     | 0.3953s               | 0.2181s                        | 1.81x   |
-| 2500 tokens     | 0.5909s               | 0.3428s                        | 1.72x   |
+| Sequence Length | PyTorch Implementation | Torch Compile | Optimized Triton Implementation | PyTorch Speedup | Torch Compile Speedup |
+|-----------------|------------------------|---------------|--------------------------------|-----------------|----------------------|
+| 500 tokens      | 0.0482s               | 0.0389s       | 0.0377s                        | 1.28x           | 1.03x                |
+| 1000 tokens     | 0.1204s               | 0.0834s       | 0.0691s                        | 1.74x           | 1.21x                |
+| 1500 tokens     | 0.2325s               | 0.1423s       | 0.1020s                        | 2.28x           | 1.40x                |
+| 2000 tokens     | 0.3379s               | 0.1937s       | 0.1355s                        | 2.49x           | 1.43x                |
+| 2500 tokens     | 0.4530s               | 0.2714s       | 0.1714s                        | 2.64x           | 1.58x                |
 
+![image](src/figures/benchmark.png)
 The speedup factor increases with sequence length up to a point, which is critical for TTS applications where longer text inputs are common.
 
 ### Kernel-Specific Benchmarks
@@ -44,23 +45,40 @@ The speedup factor increases with sequence length up to a point, which is critic
 
 | Configuration (batch×seq×hidden) | PyTorch (ms) | Triton (ms) | Speedup | Max Abs Diff |
 |----------------------------------|--------------|-------------|---------|--------------|
-| 1×512×896 (float32)              | 0.185        | 0.076       | 2.43x   | 5.96e-07     |
-| 8×512×896 (float32)              | 1.297        | 0.374       | 3.47x   | 5.96e-07     |
-| 1×512×896 (float16)              | 0.098        | 0.042       | 2.33x   | 5.86e-04     |
-| 8×512×896 (float16)              | 0.672        | 0.173       | 3.88x   | 5.86e-04     |
-| 1×512×896 (bfloat16)             | 0.097        | 0.043       | 2.25x   | 9.77e-03     |
-| 8×512×896 (bfloat16)             | 0.668        | 0.172       | 3.88x   | 9.77e-03     |
+| 1×512×896 (float32)              | 0.22         | 0.26        | 0.83x   | 1.43e-06     |
+| 1×512×896 (float16)              | 0.32         | 0.30        | 1.08x   | 1.95e-03     |
+| 1×512×896 (bfloat16)             | 0.39         | 0.15        | 2.56x   | 7.81e-03     |
+| 8×512×896 (float32)              | 0.65         | 0.52        | 1.25x   | 1.91e-06     |
+| 8×512×896 (float16)              | 1.31         | 0.37        | 3.58x   | 3.91e-03     |
+| 8×512×896 (bfloat16)             | 1.45         | 0.42        | 3.45x   | 1.56e-02     |
+| 1×1000×896 (float32)             | 0.31         | 0.23        | 1.34x   | 1.91e-06     |
+| 1×1000×896 (float16)             | 0.38         | 0.13        | 2.80x   | 1.95e-03     |
+| 1×1000×896 (bfloat16)            | 0.38         | 0.12        | 3.15x   | 1.56e-02     |
+| 4×1024×896 (float32)             | 0.68         | 0.42        | 1.62x   | 1.91e-06     |
+| 4×1024×896 (float16)             | 1.68         | 0.41        | 4.11x   | 3.91e-03     |
+| 4×1024×896 (bfloat16)            | 1.41         | 0.39        | 3.58x   | 1.56e-02     |
+| 1×2048×896 (float32)             | 0.41         | 0.25        | 1.63x   | 1.91e-06     |
+| 1×2048×896 (float16)             | 0.58         | 0.21        | 2.71x   | 1.95e-03     |
+| 1×2048×896 (bfloat16)            | 0.65         | 0.23        | 2.88x   | 1.56e-02     |
+| 2×2048×896 (float32)             | 1.03         | 0.47        | 2.18x   | 1.91e-06     |
+| 2×2048×896 (float16)             | 1.52         | 0.42        | 3.59x   | 3.91e-03     |
+| 2×2048×896 (bfloat16)            | 1.47         | 0.36        | 4.05x   | 1.56e-02     |
+
+## Performance Summary
+
+- **Average Speedup**: 2.58x
+- **Average Max Absolute Difference**: 5.75e-03
 
 #### MLP Kernel
 
 | Configuration (batch×seq×hidden→inter) | PyTorch (ms) | Triton (ms) | Speedup | Max Abs Diff |
 |---------------------------------------|--------------|-------------|---------|--------------|
-| 1×512×896→4864 (float32)              | 2.254        | 0.793       | 2.84x   | 8.58e-05     |
-| 4×512×896→4864 (float32)              | 8.937        | 3.101       | 2.88x   | 8.59e-05     |
-| 1×512×896→4864 (float16)              | 1.136        | 0.438       | 2.59x   | 1.95e-03     |
-| 4×512×896→4864 (float16)              | 4.515        | 1.693       | 2.67x   | 1.96e-03     |
-| 1×512×896→4864 (bfloat16)             | 1.145        | 0.442       | 2.59x   | 3.13e-02     |
-| 4×512×896→4864 (bfloat16)             | 4.523        | 1.694       | 2.67x   | 3.13e-02     |
+| 1×512×896→4864 (float32)              | 9.23        | 6.91       | 1.33x   | 1.58e-03     |
+| 4×512×896→4864 (float32)              | 43.11       | 34.76       | 1.24x   | 1.59e-03     |
+| 1×512×896→4864 (float16)              | 1.62        | 1.15       | 1.40x   | 1.95e-03     |
+| 4×512×896→4864 (float16)              | 9.13        | 6.90       | 1.32x   | 1.96e-03     |
+| 1×512×896→4864 (bfloat16)             | 1.51        | 1.04       | 1.45x   | 1.13e-02     |
+| 4×512×896→4864 (bfloat16)             | 8.07        | 5.93       | 1.36x   | 1.13e-02     |
 
 ## Implementation Details
 
